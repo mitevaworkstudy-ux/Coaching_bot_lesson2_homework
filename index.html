@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Групповой чат с коучем</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Экран входа -->
+  <section id="login-screen" class="screen screen--active">
+    <div class="login-card">
+      <div class="login-card__logo" aria-hidden="true">💬</div>
+      <h1 class="login-card__title">Групповой чат</h1>
+      <p class="login-card__subtitle">Войди, чтобы общаться с коучем и другими участниками</p>
+      <form id="login-form" class="login-form">
+        <label class="login-form__label" for="username-input">Введи имя</label>
+        <input
+          id="username-input"
+          class="login-form__input"
+          type="text"
+          placeholder="Твоё имя"
+          maxlength="40"
+          autocomplete="nickname"
+          required
+        >
+        <button type="submit" class="btn btn--primary">Войти</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Экран чата -->
+  <section id="chat-screen" class="screen">
+    <header class="chat-header">
+      <div class="chat-header__user">
+        <span class="chat-header__avatar" id="header-avatar" aria-hidden="true"></span>
+        <span class="chat-header__name" id="header-username"></span>
+      </div>
+      <button type="button" id="logout-btn" class="btn btn--ghost">Выйти</button>
+    </header>
+
+    <main id="messages" class="messages" aria-live="polite"></main>
+
+    <footer class="chat-footer">
+      <form id="message-form" class="message-form">
+        <input
+          id="message-input"
+          class="message-form__input"
+          type="text"
+          placeholder="Сообщение..."
+          maxlength="4000"
+          autocomplete="off"
+          required
+        >
+        <button type="submit" class="message-form__send" aria-label="Отправить">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+      </form>
+    </footer>
+  </section>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app.js"></script>
+</body>
+</html>
