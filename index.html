@@ -4,10 +4,26 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Групповой чат с коучем</title>
-  <link rel="stylesheet" href="style.css">
+  <script>
+    (function () {
+      var p = location.pathname;
+      if (p.endsWith("/")) {
+        var b = document.createElement("base");
+        b.href = p;
+        document.head.appendChild(b);
+      } else if (p.endsWith(".html")) {
+        var base = p.slice(0, p.lastIndexOf("/") + 1);
+        if (base.length > 1) {
+          var el = document.createElement("base");
+          el.href = base;
+          document.head.appendChild(el);
+        }
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <!-- Экран входа -->
   <section id="login-screen" class="screen screen--active">
     <div class="login-card">
       <div class="login-card__logo" aria-hidden="true">💬</div>
@@ -24,12 +40,12 @@
           autocomplete="nickname"
           required
         >
-        <button type="submit" class="btn btn--primary">Войти</button>
+        <button type="submit" class="btn btn--primary" id="login-btn">Войти</button>
+        <p id="login-error" class="login-error" hidden></p>
       </form>
     </div>
   </section>
 
-  <!-- Экран чата -->
   <section id="chat-screen" class="screen">
     <header class="chat-header">
       <div class="chat-header__user">
@@ -63,7 +79,6 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
