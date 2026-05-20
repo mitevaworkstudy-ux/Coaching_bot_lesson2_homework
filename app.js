@@ -6,6 +6,7 @@ const OPENROUTER_API_KEY =
 const OPENROUTER_MODEL = "google/gemini-flash-1.5";
 const POLL_INTERVAL_MS = 2000;
 const STORAGE_KEY = "chat_username";
+const BOT_USERNAME = "Коуч";
 
 const SYSTEM_PROMPT = `I want you become my coach in the transformational model of coaching. I would also call it Granular coaching.
 
@@ -83,29 +84,61 @@ Now you are my coach. Your goal is to help me by asking questions. You will foll
 
 You are in a group chat. Multiple people may write messages. Address the person who just wrote by name when relevant, but keep coaching one person at a time based on whose message you are replying to.`;
 
-const BOT_USERNAME = "Коуч";
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Supabase через fetch (без CDN — работает на GitHub Pages)
+function supabaseHeaders() {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json",
+  };
+}
+
+async function fetchMessages(columns) {
+  const url =
+    `${SUPABASE_URL}/rest/v1/messages?select=${encodeURIComponent(columns)}` +
+    "&order=created_at.asc";
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `Supabase ${res.status}`);
+  }
+  return res.json();
+}
+
+async function postMessage(row) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/messages`, {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(),
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify(row),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `Supabase ${res.status}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data) ? data[0] : data;
+}
+
 let hasRoleColumn = true;
-
-const loginScreen = document.getElementById("login-screen");
-const chatScreen = document.getElementById("chat-screen");
-const loginForm = document.getElementById("login-form");
-const usernameInput = document.getElementById("username-input");
-const logoutBtn = document.getElementById("logout-btn");
-const headerUsername = document.getElementById("header-username");
-const headerAvatar = document.getElementById("header-avatar");
-const messagesEl = document.getElementById("messages");
-const messageForm = document.getElementById("message-form");
-const messageInput = document.getElementById("message-input");
-const toastEl = document.getElementById("toast");
-
-let currentUser = localStorage.getItem(STORAGE_KEY) || "";
+let loginScreen, chatScreen, loginForm, usernameInput, loginBtn, loginErrorEl;
+let logoutBtn, headerUsername, headerAvatar, messagesEl, messageForm, messageInput, toastEl;
+let currentUser = "";
 let pollTimer = null;
 let lastMessageIds = "";
 let isSending = false;
 let showTyping = false;
 
+function showLoginError(text) {
+  if (!loginErrorEl) return;
+  loginErrorEl.textContent = text;
+  loginErrorEl.hidden = !text;
+}
+
 function showToast(text, duration = 3000) {
+  if (!toastEl) return;
   toastEl.textContent = text;
   toastEl.hidden = false;
   clearTimeout(showToast._timer);
@@ -115,23 +148,28 @@ function showToast(text, duration = 3000) {
 }
 
 function showScreen(screen) {
+  if (!loginScreen || !chatScreen) return;
   loginScreen.classList.toggle("screen--active", screen === "login");
   chatScreen.classList.toggle("screen--active", screen === "chat");
 }
 
 function getInitials(name) {
-  return name
-    .trim()
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase() || "?";
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .map((w) => w[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "?"
+  );
 }
 
 function formatTime(iso) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function escapeHtml(text) {
@@ -140,17 +178,25 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function isBotMessage(msg) {
+  return msg.role === "bot" || msg.username === BOT_USERNAME;
+}
+
 function enterChat(username) {
   currentUser = username.trim();
-  if (!currentUser) return;
+  if (!currentUser) {
+    showLoginError("Введи имя");
+    return;
+  }
 
+  showLoginError("");
   localStorage.setItem(STORAGE_KEY, currentUser);
   headerUsername.textContent = currentUser;
   headerAvatar.textContent = getInitials(currentUser);
   showScreen("chat");
   startPolling();
   loadMessages();
-  messageInput.focus();
+  messageInput?.focus();
 }
 
 function logout() {
@@ -177,37 +223,32 @@ function startPolling() {
 }
 
 async function loadMessages() {
-  const columns = hasRoleColumn
-    ? "id, username, role, text, created_at"
-    : "id, username, text, created_at";
+  try {
+    const columns = hasRoleColumn
+      ? "id,username,role,text,created_at"
+      : "id,username,text,created_at";
 
-  let { data, error } = await supabase
-    .from("messages")
-    .select(columns)
-    .order("created_at", { ascending: true });
+    let data;
+    try {
+      data = await fetchMessages(columns);
+    } catch (err) {
+      if (hasRoleColumn && String(err.message).includes("role")) {
+        hasRoleColumn = false;
+        data = await fetchMessages("id,username,text,created_at");
+      } else {
+        throw err;
+      }
+    }
 
-  if (error?.message?.includes("role")) {
-    hasRoleColumn = false;
-    ({ data, error } = await supabase
-      .from("messages")
-      .select("id, username, text, created_at")
-      .order("created_at", { ascending: true }));
+    const ids = (data || []).map((m) => m.id).join(",");
+    if (ids !== lastMessageIds || showTyping) {
+      lastMessageIds = ids;
+      renderMessages(data || []);
+    }
+  } catch (err) {
+    console.error(err);
+    showToast("Не удалось загрузить сообщения");
   }
-
-  if (error) {
-    console.error(error);
-    return;
-  }
-
-  const ids = (data || []).map((m) => m.id).join(",");
-  if (ids !== lastMessageIds || showTyping) {
-    lastMessageIds = ids;
-    renderMessages(data || []);
-  }
-}
-
-function isBotMessage(msg) {
-  return msg.role === "bot" || msg.username === BOT_USERNAME;
 }
 
 function renderMessages(messages) {
@@ -220,8 +261,7 @@ function renderMessages(messages) {
   const html = messages
     .map((msg) => {
       const isBot = isBotMessage(msg);
-      const isOwn =
-        msg.username === currentUser && !isBotMessage(msg);
+      const isOwn = msg.username === currentUser && !isBot;
       const sideClass = isBot ? "msg--bot" : isOwn ? "msg--user" : "msg--other";
       const author = isBot ? BOT_USERNAME : escapeHtml(msg.username);
 
@@ -250,48 +290,32 @@ async function insertMessage(username, role, text) {
   if (hasRoleColumn) row.role = role;
   if (!hasRoleColumn && role === "bot") row.username = BOT_USERNAME;
 
-  let { data, error } = await supabase
-    .from("messages")
-    .insert(row)
-    .select()
-    .single();
-
-  if (error?.message?.includes("role")) {
-    hasRoleColumn = false;
-    delete row.role;
-    if (role === "bot") row.username = BOT_USERNAME;
-    ({ data, error } = await supabase
-      .from("messages")
-      .insert(row)
-      .select()
-      .single());
+  try {
+    return await postMessage(row);
+  } catch (err) {
+    if (hasRoleColumn && String(err.message).includes("role")) {
+      hasRoleColumn = false;
+      delete row.role;
+      if (role === "bot") row.username = BOT_USERNAME;
+      return postMessage(row);
+    }
+    throw err;
   }
-
-  if (error) throw error;
-  return data;
 }
 
 function buildOpenRouterMessages(allMessages, replyingToUser) {
-  const history = allMessages
-    .filter((m) => m.role === "user" || m.role === "bot")
-    .slice(-30)
-    .map((m) => ({
-      role: m.role === "bot" ? "assistant" : "user",
-      content:
-        !isBotMessage(m)
-          ? `[${m.username}]: ${m.text}`
-          : m.text,
-    }));
-
-  const contextNote = {
-    role: "user",
-    content: `Reply to the latest message from ${replyingToUser}. Follow your coaching process.`,
-  };
+  const history = allMessages.slice(-30).map((m) => ({
+    role: isBotMessage(m) ? "assistant" : "user",
+    content: !isBotMessage(m) ? `[${m.username}]: ${m.text}` : m.text,
+  }));
 
   return [
     { role: "system", content: SYSTEM_PROMPT },
     ...history,
-    contextNote,
+    {
+      role: "user",
+      content: `Reply to the latest message from ${replyingToUser}. Follow your coaching process.`,
+    },
   ];
 }
 
@@ -301,7 +325,7 @@ async function fetchBotReply(allMessages, username) {
     headers: {
       Authorization: `Bearer ${OPENROUTER_API_KEY}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": window.location.origin,
+      "HTTP-Referer": window.location.href,
       "X-Title": "Group Coach Chat",
     },
     body: JSON.stringify({
@@ -333,16 +357,13 @@ async function handleSend(text) {
     await loadMessages();
 
     showTyping = true;
-    renderMessages(
-      (await supabase.from("messages").select("*").order("created_at")).data ||
-        []
-    );
+    const cols = hasRoleColumn
+      ? "id,username,role,text,created_at"
+      : "id,username,text,created_at";
+    const current = await fetchMessages(cols);
+    renderMessages(current || []);
 
-    const { data: allMessages } = await supabase
-      .from("messages")
-      .select("id, username, role, text, created_at")
-      .order("created_at", { ascending: true });
-
+    const allMessages = await fetchMessages(cols);
     const botText = await fetchBotReply(allMessages || [], currentUser);
     await insertMessage(BOT_USERNAME, "bot", botText);
     lastMessageIds = "";
@@ -359,23 +380,71 @@ async function handleSend(text) {
   }
 }
 
-loginForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  enterChat(usernameInput.value);
-});
+function setupEventListeners() {
+  loginForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    enterChat(usernameInput.value);
+  });
 
-logoutBtn.addEventListener("click", logout);
+  logoutBtn.addEventListener("click", logout);
 
-messageForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const text = messageInput.value;
-  messageInput.value = "";
-  handleSend(text);
-});
+  messageForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = messageInput.value;
+    messageInput.value = "";
+    handleSend(text);
+  });
+}
 
-if (currentUser) {
-  enterChat(currentUser);
+async function testSupabaseConnection() {
+  try {
+    await fetchMessages("id");
+    return true;
+  } catch (err) {
+    console.error("Supabase:", err);
+    showLoginError(
+      "Нет связи с Supabase. Проверь SQL-политики в Supabase и обнови страницу."
+    );
+    return false;
+  }
+}
+
+function startApp() {
+  loginScreen = document.getElementById("login-screen");
+  chatScreen = document.getElementById("chat-screen");
+  loginForm = document.getElementById("login-form");
+  usernameInput = document.getElementById("username-input");
+  loginBtn = document.getElementById("login-btn");
+  loginErrorEl = document.getElementById("login-error");
+  logoutBtn = document.getElementById("logout-btn");
+  headerUsername = document.getElementById("header-username");
+  headerAvatar = document.getElementById("header-avatar");
+  messagesEl = document.getElementById("messages");
+  messageForm = document.getElementById("message-form");
+  messageInput = document.getElementById("message-input");
+  toastEl = document.getElementById("toast");
+
+  setupEventListeners();
+
+  testSupabaseConnection().then((ok) => {
+    if (!ok) {
+      showScreen("login");
+      usernameInput?.focus();
+      return;
+    }
+
+    currentUser = localStorage.getItem(STORAGE_KEY) || "";
+    if (currentUser) {
+      enterChat(currentUser);
+    } else {
+      showScreen("login");
+      usernameInput.focus();
+    }
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", startApp);
 } else {
-  showScreen("login");
-  usernameInput.focus();
+  startApp();
 }
